@@ -15,3 +15,9 @@ There are versions of the script for both rooted and nonrooted phones.
 
 The script is available at:
 <a href="https://github.com/rxcomm/convkey">https://github.com/rxcomm/convkey</a>
+
+  [conversations]: https://conversations.im/
+  [pure-otr]: https://github.com/python-otr/pure-python-otr
+  [otr]: https://otr.im
+  [libotr]: https://github.com/off-the-record/libotr
+
