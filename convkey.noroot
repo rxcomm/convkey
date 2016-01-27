@@ -1,0 +1,121 @@
+#! /usr/bin/python
+"""Copyright 2016 by David R. Andersen <k0rx@RXcomm.net>.
+
+This script is free software; you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation; either version 3 of the License, or
+any later version.
+
+This script is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this library.  If not, see <http://www.gnu.org/licenses/>.
+
+This script will read a Conversations database from an Android phone
+and output the OTR private keys for each account in the database.
+
+Instructions:
+
+1. You must have adb installed on your system (apt-get adb in
+   Debian/Ubuntu). The script uses adb to get the database.
+
+2. Plug your phone in and run this script.
+
+3. This version of the script will run on an unrooted phone.
+"""
+
+import sys
+import zlib
+import sqlite3
+import json
+import binascii
+#import pprint
+#import shutil
+from otrapps.util import fingerprint
+from tempfile import SpooledTemporaryFile as tmpfile
+from potr.compatcrypto.pycrypto import DSAKey
+from subprocess import call, Popen, PIPE
+
+def get_database():
+    """Pull the Conversations database from an Android phone using adb"""
+
+    mem = tmpfile(max_size=1024000, mode='w+b')
+    mem.seek(0)
+    # FIXME: do some error checking here...
+    call(['adb', 'kill-server'], stdout=PIPE, stderr=PIPE)
+    call(['adb', 'backup', '-f', 'conv.ab', 'eu.siacs.conversations'])
+    p1 = Popen(['dd', 'if=conv.ab', 'bs=1', 'skip=24'],
+               stdout=mem, stderr=PIPE, bufsize=4096)
+    p1.wait()
+    call(['adb', 'kill-server'], stdout=PIPE, stderr=PIPE)
+    p1.wait()
+    mem.seek(0)
+    uncompressed = zlib.decompress(mem.read())
+    mem.seek(0)
+    mem.write(uncompressed)
+    mem.seek(0)
+    p2 = Popen(['tar', '-xvf', '-'], stdin=mem, stdout=PIPE, stderr=PIPE)
+    p2.wait()
+    mem.close()
+    return
+
+def parse_database():
+    """Parse the Conversations database for all private OTR keys"""
+
+    keydict = {}
+    database = sqlite3.connect('./apps/eu.siacs.conversations/db/history')
+    #shutil.rmtree('apps') # shutil.rmtree() doesn't work reliably
+    cur = database.cursor()
+    cur.execute('select * from accounts')
+    account_data = cur.fetchall()
+    cur.close()
+    for account in account_data:
+        userid = account[1] + '@' + account[2]
+        print 80*'-'
+        print 'Your XMPP ID is: ' + userid + '\n'
+        k = json.loads(account[7])
+        print 'Your OTR private key parts are:'
+        print 'Y: %s' % k['otr_y'].upper()
+        print 'G: %s' % k['otr_g'].upper()
+        print 'P: %s' % k['otr_p'].upper()
+        print 'Q: %s' % k['otr_q'].upper()
+        print 'X: %s' % k['otr_x'].upper()
+        k['otr_y'] = int(k['otr_y'], 16)
+        k['otr_g'] = int(k['otr_g'], 16)
+        k['otr_p'] = int(k['otr_p'], 16)
+        k['otr_q'] = int(k['otr_q'], 16)
+        k['otr_x'] = int(k['otr_x'], 16)
+
+        newkey = DSAKey((k['otr_y'],
+                         k['otr_g'],
+                         k['otr_p'],
+                         k['otr_q'],
+                         k['otr_x']
+                        ),
+                        private=True)
+        fprint = fingerprint((k['otr_y'], k['otr_g'], k['otr_p'], k['otr_q']))
+        print 'Fingerprint: ' + fprint.upper() + '\n'
+        print 'Your base64-encoded OTR private key is [in libotr format]:\n%s' \
+               % binascii.b2a_base64(newkey.serializePrivateKey())
+
+        # keydict is compatible with keysync from The Guardian Project
+        keydict[userid] = {'fingerprint': fprint,
+                           'name': userid,
+                           'protocol': 'XMPP',
+                           'resource': 'Conversations',
+                           'verification': None, # I'm not sure what this means
+                           'p': k['otr_p'],
+                           'q': k['otr_q'],
+                           'g': k['otr_g'],
+                           'x': k['otr_x'],
+                           'y': k['otr_y'],
+                          }
+    #pprint.pprint(keydict)
+    print 'Don\'t forget to securely remove the \"apps\" directory tree...\n'
+
+if __name__ == '__main__':
+    get_database()
+    parse_database()
